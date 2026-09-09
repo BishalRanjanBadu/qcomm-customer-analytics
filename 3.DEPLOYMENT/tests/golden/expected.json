@@ -1,0 +1,37 @@
+{
+  "model_version": "v_20260909T1228Z_nogit",
+  "contract_version": "v1",
+  "tolerance": 1e-06,
+  "results": {
+    "G001": {
+      "segment_id": 3,
+      "segment_name": "Champions",
+      "distance_to_centroid": 0.102577
+    },
+    "G002": {
+      "segment_id": 2,
+      "segment_name": "Steady Regulars",
+      "distance_to_centroid": 0.182074
+    },
+    "G003": {
+      "segment_id": 0,
+      "segment_name": "High-Value At-Risk",
+      "distance_to_centroid": 0.247072
+    },
+    "G004": {
+      "segment_id": 1,
+      "segment_name": "Lost / Dormant",
+      "distance_to_centroid": 0.160509
+    },
+    "G005": {
+      "segment_id": 2,
+      "segment_name": "Steady Regulars",
+      "distance_to_centroid": 2.275166
+    },
+    "G006": {
+      "segment_id": 0,
+      "segment_name": "High-Value At-Risk",
+      "distance_to_centroid": 8.095777
+    }
+  }
+}
