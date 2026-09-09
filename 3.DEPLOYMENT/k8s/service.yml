@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: qcomm-rfm-api
+  namespace: prod
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+spec:
+  type: LoadBalancer
+  selector: {app: qcomm-rfm-api, track: stable}
+  # Port 8501 is NOT exposed. There is no UI container. An exposed unserved port leaves a
+  # permanently unhealthy LB target.
+  ports:
+    - {name: http, port: 80, targetPort: 8000, protocol: TCP}

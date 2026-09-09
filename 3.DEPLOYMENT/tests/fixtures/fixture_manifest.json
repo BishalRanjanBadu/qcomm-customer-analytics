@@ -1,0 +1,50 @@
+{
+  "contract_version": "v1",
+  "feature_order_hash": "a50fb3d15315ec03",
+  "library_versions": {
+    "numpy": "2.1.3",
+    "pandas": "2.2.3",
+    "scikit-learn": "1.6.1",
+    "scipy": "1.16.3"
+  },
+  "feature_dtypes": {
+    "recency_days": "float64",
+    "frequency": "int64",
+    "monetary_mean": "float64"
+  },
+  "model": {
+    "algo": "KMeans",
+    "k": 4,
+    "features": [
+      "recency_days",
+      "frequency",
+      "monetary_mean"
+    ],
+    "transform": "log1p -> StandardScaler",
+    "scaler_mean": [
+      2.1396892482201015,
+      1.6204866490670535,
+      6.20592506637903
+    ],
+    "scaler_scale": [
+      1.0873314965351688,
+      0.7438759245473856,
+      0.552499359350201
+    ],
+    "segment_names": {
+      "3": "Champions",
+      "2": "Steady Regulars",
+      "0": "High-Value At-Risk",
+      "1": "Lost / Dormant"
+    }
+  },
+  "provenance": "stratified sample of /home/claude/z/qcomm_customers_rfm.csv",
+  "rows": 4000,
+  "seed": 42,
+  "built_with": {
+    "numpy": "2.4.4",
+    "pandas": "3.0.2",
+    "scikit-learn": "1.8.0",
+    "scipy": "1.17.1"
+  }
+}

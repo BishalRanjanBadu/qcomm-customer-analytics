@@ -1,0 +1,9 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: qcomm-rfm-api, namespace: prod}
+spec:
+  # With replicas: 1, minAvailable would block EVERY voluntary eviction, including node
+  # drains during an upgrade. maxUnavailable is the correct form at this replica count.
+  maxUnavailable: 1
+  selector:
+    matchLabels: {app: qcomm-rfm-api, track: stable}

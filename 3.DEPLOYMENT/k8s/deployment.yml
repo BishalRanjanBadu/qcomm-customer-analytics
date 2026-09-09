@@ -1,0 +1,67 @@
+# Slim deployment: 1 replica, API only, sized for a single t3.medium.
+# The canary manifests in k8s/canary/ are correct and DEFERRED — canary needs >=2 pods
+# and one t3.medium cannot host them with headroom. Documented deviation, not a waiver.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qcomm-rfm-api
+  namespace: prod
+  labels: {app: qcomm-rfm-api, track: stable}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: {app: qcomm-rfm-api, track: stable}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  template:
+    metadata:
+      labels: {app: qcomm-rfm-api, track: stable}
+    spec:
+      # By NAME only. Never hand-defined here AND via eksctl — two sources of truth.
+      serviceAccountName: qcomm-rfm-sa
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: api
+          image: ${IMAGE}          # rendered by render_and_verify.sh; never :latest
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8000, name: http}]
+          envFrom: [{configMapRef: {name: qcomm-rfm-config}}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          # HOME=/home/appuser is set in the Dockerfile. With readOnlyRootFilesystem an
+          # unset or unwritable HOME crash-loops ON THE CLUSTER ONLY.
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: home, mountPath: /home/appuser}
+          resources:
+            requests: {cpu: "250m", memory: "768Mi"}
+            limits:   {cpu: "1000m", memory: "1536Mi"}
+          # Sized for the cold artifact load from S3. Without it a slow first start reads
+          # as CrashLoopBackOff.
+          startupProbe:
+            httpGet: {path: /health, port: 8000}
+            periodSeconds: 5
+            failureThreshold: 24        # up to 120s to become ready
+          livenessProbe:
+            httpGet: {path: /live, port: 8000}   # process only, no I/O
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: {path: /health, port: 8000} # artifact loaded + manifest validated
+            periodSeconds: 10
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec: {command: ["sleep", "10"]}   # drain in-flight requests
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - {name: home, emptyDir: {}}

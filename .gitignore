@@ -1,0 +1,35 @@
+# THIS FILE BELONGS AT THE REPOSITORY ROOT (QCOMM_CUSTOMER_ANALYTICS/), not inside
+# 3.DEPLOYMENT/. It has to cover 1.RAW/ and the notebooks, which are siblings of
+# 3.DEPLOYMENT, and a .gitignore only governs its own directory and below.
+
+# data — S3 is the source of truth. 127 MB of CSV must never enter the history.
+1.RAW/
+*.parquet
+*.pkl
+*.csv
+
+# EXEMPTIONS. A negation must come AFTER the rule it exempts, or the fixture is silently
+# excluded and CI fails on a missing file — a real defect in a previous project.
+!3.DEPLOYMENT/tests/fixtures/*.csv
+!3.DEPLOYMENT/tests/fixtures/*.pkl
+
+# credentials — never
+.env
+.env.*
+!.env.example
+.aws/
+*.pem
+*.key
+
+# notebooks ARE committed — they are the Phase-1 documentation. Strip outputs before
+# committing so the repo does not bloat with embedded plot data.
+
+# build + noise
+rendered/
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.venv/
+.ipynb_checkpoints/
+.DS_Store

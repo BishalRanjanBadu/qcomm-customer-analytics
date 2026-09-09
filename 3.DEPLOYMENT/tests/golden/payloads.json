@@ -1,0 +1,92 @@
+{
+  "accept": [
+    {
+      "name": "champion",
+      "customer_id": "G001",
+      "recency_days": 1.4,
+      "frequency": 13,
+      "monetary_mean": 583.5
+    },
+    {
+      "name": "steady",
+      "customer_id": "G002",
+      "recency_days": 3.7,
+      "frequency": 5,
+      "monetary_mean": 405.6
+    },
+    {
+      "name": "high_value_risk",
+      "customer_id": "G003",
+      "recency_days": 15.2,
+      "frequency": 2,
+      "monetary_mean": 742.88
+    },
+    {
+      "name": "lost",
+      "customer_id": "G004",
+      "recency_days": 21.6,
+      "frequency": 2,
+      "monetary_mean": 327.94
+    },
+    {
+      "name": "boundary_r0",
+      "customer_id": "G005",
+      "recency_days": 0.0,
+      "frequency": 1,
+      "monetary_mean": 194.99
+    },
+    {
+      "name": "boundary_r45",
+      "customer_id": "G006",
+      "recency_days": 45.0,
+      "frequency": 1,
+      "monetary_mean": 66106.56
+    }
+  ],
+  "reject": [
+    {
+      "name": "null_frequency",
+      "expect_status": 422,
+      "payload": {
+        "recency_days": 5.0,
+        "frequency": null,
+        "monetary_mean": 500.0
+      }
+    },
+    {
+      "name": "recency_past_window",
+      "expect_status": 422,
+      "payload": {
+        "recency_days": 46.0,
+        "frequency": 3,
+        "monetary_mean": 500.0
+      }
+    },
+    {
+      "name": "zero_frequency",
+      "expect_status": 422,
+      "payload": {
+        "recency_days": 5.0,
+        "frequency": 0,
+        "monetary_mean": 500.0
+      }
+    },
+    {
+      "name": "missing_monetary",
+      "expect_status": 422,
+      "payload": {
+        "recency_days": 5.0,
+        "frequency": 3
+      }
+    },
+    {
+      "name": "negative_monetary",
+      "expect_status": 422,
+      "payload": {
+        "recency_days": 5.0,
+        "frequency": 3,
+        "monetary_mean": -1.0
+      }
+    }
+  ]
+}

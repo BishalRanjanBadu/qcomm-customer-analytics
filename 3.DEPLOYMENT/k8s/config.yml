@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qcomm-rfm-config
+  namespace: prod
+data:
+  AWS_REGION: "ap-south-2"
+  S3_BUCKET: "qcomm-rfm"
+  ENV_PREFIX: "dev"
+  ROLE: "api"
+  PORT: "8000"
+  STRICT_LIBS: "true"
+  # Phase 3 flips this ON together with the s3:PutObject scope on the IRSA policy.
+  # Enabling it against a read-only role yields AccessDenied on every request.
+  LOG_PREDICTIONS: "false"

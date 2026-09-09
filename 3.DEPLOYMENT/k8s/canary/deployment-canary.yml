@@ -1,0 +1,50 @@
+# DEFERRED — see README.md in this directory. Do not apply on a single-node cluster.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qcomm-rfm-api-canary
+  namespace: prod
+  labels: {app: qcomm-rfm-api, track: canary}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: qcomm-rfm-api, track: canary}
+  template:
+    metadata:
+      labels: {app: qcomm-rfm-api, track: canary}
+    spec:
+      serviceAccountName: qcomm-rfm-sa
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: api
+          image: ${IMAGE}
+          ports: [{containerPort: 8000, name: http}]
+          envFrom: [{configMapRef: {name: qcomm-rfm-config}}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: home, mountPath: /home/appuser}
+          resources:
+            requests: {cpu: "250m", memory: "768Mi"}
+            limits:   {cpu: "1000m", memory: "1536Mi"}
+          startupProbe:
+            httpGet: {path: /health, port: 8000}
+            periodSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            httpGet: {path: /live, port: 8000}
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: {path: /health, port: 8000}
+            periodSeconds: 10
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - {name: home, emptyDir: {}}

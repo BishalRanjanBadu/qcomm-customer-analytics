@@ -1,0 +1,16 @@
+.git
+.github
+notebooks/
+tests/
+1.RAW/
+*.csv
+*.parquet
+*.ipynb
+.env
+.env.*
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+k8s/
+*.md

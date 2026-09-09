@@ -1,0 +1,4 @@
+# CI installs this file. It must contain everything the tests import.
+-r requirements.txt
+pytest==9.1.1
+httpx==0.28.1
