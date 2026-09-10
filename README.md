@@ -601,6 +601,3 @@ manifests are designed around an immutable SHA-tagged image rather than `:latest
 Data Science | Machine Learning | MLOps | Customer Analytics
 
 ---
-
-⭐ If you find this project useful, feel free to explore the implementation, notebooks, tests,
-and deployment runbooks in the repository.
