@@ -11,22 +11,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Root-controlled AWS account model:
-# - AWS account/infrastructure is owned and controlled from the AWS root account.
-# - GitHub Actions does NOT use AWS OIDC/IAM-role federation.
-# - GitHub Actions uses a dedicated IAM access key stored in GitHub Actions Secrets.
-# - NEVER store AWS root access keys in GitHub or in this repository.
-#
-# Required GitHub Actions secrets:
-#   AWS_ACCESS_KEY_ID
-#   AWS_SECRET_ACCESS_KEY
-# Optional (only if using temporary credentials):
-#   AWS_SESSION_TOKEN
-#
-# The IAM user behind these keys must have only the permissions required for this
-# project's ECR/EKS/S3 operations. The AWS root account is used by the owner to
-# create/manage that user and the infrastructure; root credentials never enter CI.
-
 env:
   PROJECT_DIR: 3.DEPLOYMENT
   AWS_REGION:      ${{ vars.AWS_REGION      || 'ap-south-2' }}
@@ -40,7 +24,6 @@ permissions:
   contents: read
 
 jobs:
-  # ------------------------------------------------------------------ 1. TEST
   test:
     runs-on: ubuntu-latest
     steps:
@@ -49,21 +32,15 @@ jobs:
         with:
           python-version: '3.13'
           cache: pip
-
       - run: pip install -r "$PROJECT_DIR/requirements-dev.txt"
-
-      # The test job deliberately has NO AWS credentials.
       - name: pytest (no AWS credentials configured)
         working-directory: 3.DEPLOYMENT
         run: pytest tests/ -q --tb=short
-
       - name: verify the fixture is committed, not gitignored
         run: |
           test -f "$PROJECT_DIR/tests/fixtures/sample_customers.csv" || { echo "fixture missing — a data/*.csv ignore rule probably ate it"; exit 1; }
-          test -f "$PROJECT_DIR/tests/fixtures/fixture_model.pkl"    || { echo "fixture model missing"; exit 1; }
-          echo "fixture present"
+          test -f "$PROJECT_DIR/tests/fixtures/fixture_model.pkl" || { echo "fixture model missing"; exit 1; }
 
-  # ------------------------------------------------------------------ 2. BUILD
   build:
     needs: test
     if: github.event_name == 'push'
@@ -73,10 +50,6 @@ jobs:
       digest: ${{ steps.push.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
-
-      # Authenticate with the AWS account through GitHub Secrets.
-      # The credentials must belong to a dedicated IAM deployment user created/managed
-      # from the AWS root-controlled account. Root access keys must NEVER be used here.
       - name: configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -84,22 +57,15 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
-
       - uses: aws-actions/amazon-ecr-login@v2
         id: ecr
-
       - name: derive image reference
         id: meta
         run: |
           REG="${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
           SHA="${GITHUB_SHA::7}"
           echo "image=${REG}/${{ env.ECR_REPO }}:${SHA}" >> "$GITHUB_OUTPUT"
-          echo "registry=${REG}" >> "$GITHUB_OUTPUT"
-          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
-
       - uses: docker/setup-buildx-action@v4
-
-      # SHA TAG ONLY. The ECR repo is immutable; never push :latest.
       - uses: docker/build-push-action@v7
         id: push
         with:
@@ -108,13 +74,10 @@ jobs:
           tags: ${{ steps.meta.outputs.image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
       - name: record the image DIGEST
         run: |
           echo "tag:    ${{ steps.meta.outputs.image }}"
           echo "digest: ${{ steps.push.outputs.digest }}"
-          echo "The digest identifies the exact image that was built."
-
       - name: security scan (report, do not block)
         uses: aquasecurity/trivy-action@v0.36.0
         continue-on-error: true
@@ -125,7 +88,6 @@ jobs:
           exit-code: '0'
           format: table
 
-  # ------------------------------------------------------------------ 3. DEPLOY
   deploy:
     needs: build
     if: github.ref == 'refs/heads/main'
@@ -133,7 +95,6 @@ jobs:
     environment: prod
     steps:
       - uses: actions/checkout@v7
-
       - name: configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -141,48 +102,60 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
-
       - name: pre-flight the runner toolchain
         run: |
           for c in kubectl envsubst aws; do
             command -v "$c" >/dev/null || { echo "FATAL: $c not on the runner"; exit 1; }
           done
-          "$(command -v python3 || command -v python)" -c "import yaml" \
-            || pip install pyyaml
-          echo "toolchain OK"
-
+          python3 -c "import yaml" || pip install pyyaml
       - name: verify AWS identity
         run: aws sts get-caller-identity
-
       - name: kubeconfig
         run: aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION"
-
-      # CI verifies infrastructure; it does not create the cluster, namespace, or IRSA.
       - name: pre-flight cluster and IRSA
         run: |
-          kubectl get ns "$K8S_NAMESPACE" >/dev/null || {
-            echo "FATAL: namespace '$K8S_NAMESPACE' missing. Create it from the AWS-controlled infrastructure setup."; exit 1; }
-          kubectl -n "$K8S_NAMESPACE" get sa "$SERVICE_ACCOUNT" >/dev/null || {
-            echo "FATAL: ServiceAccount '$SERVICE_ACCOUNT' missing in '$K8S_NAMESPACE'."; exit 1; }
-          echo "cluster + IRSA pre-flight OK"
-
+          kubectl get ns "$K8S_NAMESPACE" >/dev/null || { echo "FATAL: namespace '$K8S_NAMESPACE' missing"; exit 1; }
+          kubectl -n "$K8S_NAMESPACE" get sa "$SERVICE_ACCOUNT" >/dev/null || { echo "FATAL: ServiceAccount '$SERVICE_ACCOUNT' missing"; exit 1; }
       - name: render, verify, then apply
         env:
           IMAGE: ${{ needs.build.outputs.image }}
         run: |
           bash .github/scripts/render_and_verify.sh "$PROJECT_DIR/k8s" rendered
           kubectl apply -n "$K8S_NAMESPACE" -f rendered/
-
       - name: wait for rollout
+        id: rollout
         run: kubectl -n "$K8S_NAMESPACE" rollout status deploy/qcomm-rfm-api --timeout=300s
-
+      - name: rollout diagnostics on failure
+        if: failure() && steps.rollout.conclusion == 'failure'
+        run: |
+          set +e
+          echo '=== DEPLOYMENT ==='
+          kubectl -n "$K8S_NAMESPACE" get deployment qcomm-rfm-api -o wide
+          kubectl -n "$K8S_NAMESPACE" describe deployment qcomm-rfm-api
+          echo '=== REPLICASETS ==='
+          kubectl -n "$K8S_NAMESPACE" get rs -l app=qcomm-rfm-api -o wide
+          echo '=== PODS ==='
+          kubectl -n "$K8S_NAMESPACE" get pods -l app=qcomm-rfm-api -o wide
+          echo '=== POD DETAILS ==='
+          for pod in $(kubectl -n "$K8S_NAMESPACE" get pods -l app=qcomm-rfm-api -o name); do
+            echo "--- $pod ---"
+            kubectl -n "$K8S_NAMESPACE" describe "$pod"
+            echo '--- current logs ---'
+            kubectl -n "$K8S_NAMESPACE" logs "$pod" -c api --tail=200
+            echo '--- previous logs ---'
+            kubectl -n "$K8S_NAMESPACE" logs "$pod" -c api --previous --tail=200
+          done
+          echo '=== RECENT EVENTS ==='
+          kubectl -n "$K8S_NAMESPACE" get events --sort-by='.lastTimestamp' | tail -100
+          echo '=== ROLLOUT HISTORY ==='
+          kubectl -n "$K8S_NAMESPACE" rollout history deploy/qcomm-rfm-api
+          exit 1
       - name: report what is actually running
+        if: success()
         run: |
           kubectl -n "$K8S_NAMESPACE" get pods -l app=qcomm-rfm-api -o wide
-          kubectl -n "$K8S_NAMESPACE" get deploy qcomm-rfm-api \
-            -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+          kubectl -n "$K8S_NAMESPACE" get deploy qcomm-rfm-api -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
 
-  # ------------------------------------------------------------- 4. POST-DEPLOY
   golden:
     needs: [build, deploy]
     if: github.ref == 'refs/heads/main'
@@ -192,7 +165,6 @@ jobs:
       - uses: actions/setup-python@v7
         with: {python-version: '3.13'}
       - run: pip install -r "$PROJECT_DIR/requirements-dev.txt"
-
       - name: configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -200,23 +172,19 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
-
       - name: verify AWS identity
         run: aws sts get-caller-identity
-
       - name: resolve the load balancer
         id: lb
         run: |
           aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION"
           for i in $(seq 1 30); do
-            HOST=$(kubectl -n "$K8S_NAMESPACE" get svc qcomm-rfm-api \
-                   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            HOST=$(kubectl -n "$K8S_NAMESPACE" get svc qcomm-rfm-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
             [ -n "$HOST" ] && break
             echo "waiting for LB hostname ($i/30)"; sleep 10
           done
           [ -n "$HOST" ] || { echo "FATAL: no LB hostname after 5 minutes"; exit 1; }
           echo "endpoint=http://${HOST}" >> "$GITHUB_OUTPUT"
-
       - name: golden payload check against the live endpoint
         env:
           ENDPOINT: ${{ steps.lb.outputs.endpoint }}
