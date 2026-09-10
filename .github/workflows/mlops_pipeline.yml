@@ -11,23 +11,33 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Zero-config: every non-secret identifier has a concrete default, so a fresh clone works
-# without the user creating a single repo Variable. Composite values are DERIVED, not added
-# as more variables.
-# Phase 2 code lives in the 3.DEPLOYMENT/ subfolder; .github/ must sit at the repo ROOT
-# because GitHub only reads workflows from there. Every path below is relative to the root.
+# Root-controlled AWS account model:
+# - AWS account/infrastructure is owned and controlled from the AWS root account.
+# - GitHub Actions does NOT use AWS OIDC/IAM-role federation.
+# - GitHub Actions uses a dedicated IAM access key stored in GitHub Actions Secrets.
+# - NEVER store AWS root access keys in GitHub or in this repository.
+#
+# Required GitHub Actions secrets:
+#   AWS_ACCESS_KEY_ID
+#   AWS_SECRET_ACCESS_KEY
+# Optional (only if using temporary credentials):
+#   AWS_SESSION_TOKEN
+#
+# The IAM user behind these keys must have only the permissions required for this
+# project's ECR/EKS/S3 operations. The AWS root account is used by the owner to
+# create/manage that user and the infrastructure; root credentials never enter CI.
+
 env:
   PROJECT_DIR: 3.DEPLOYMENT
-  AWS_REGION:     ${{ vars.AWS_REGION     || 'ap-south-2' }}
-  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID || '117211782845' }}
-  ECR_REPO:       ${{ vars.ECR_REPO       || 'qcomm-rfm-api' }}
-  EKS_CLUSTER:    ${{ vars.EKS_CLUSTER    || 'qcomm-rfm-cluster' }}
-  K8S_NAMESPACE:  ${{ vars.K8S_NAMESPACE  || 'prod' }}
+  AWS_REGION:      ${{ vars.AWS_REGION      || 'ap-south-2' }}
+  AWS_ACCOUNT_ID:  ${{ vars.AWS_ACCOUNT_ID  || '117211782845' }}
+  ECR_REPO:        ${{ vars.ECR_REPO        || 'qcomm-rfm-api' }}
+  EKS_CLUSTER:     ${{ vars.EKS_CLUSTER     || 'qcomm-rfm-cluster' }}
+  K8S_NAMESPACE:   ${{ vars.K8S_NAMESPACE   || 'prod' }}
   SERVICE_ACCOUNT: ${{ vars.SERVICE_ACCOUNT || 'qcomm-rfm-sa' }}
 
 permissions:
   contents: read
-  id-token: write          # required for OIDC. No long-lived AWS key exists anywhere.
 
 jobs:
   # ------------------------------------------------------------------ 1. TEST
@@ -40,13 +50,9 @@ jobs:
           python-version: '3.13'
           cache: pip
 
-      # CI installs requirements-dev.txt, which -r includes requirements.txt. Whatever
-      # file CI installs from must contain everything the tests import.
       - run: pip install -r "$PROJECT_DIR/requirements-dev.txt"
 
-      # THE TEST JOB HAS NO CLOUD CREDENTIALS AT ALL. Data resolves to the committed
-      # fixture. This removes the entire class of "CI failed on NoSuchKey / missing
-      # credentials / unset S3_BUCKET".
+      # The test job deliberately has NO AWS credentials.
       - name: pytest (no AWS credentials configured)
         working-directory: 3.DEPLOYMENT
         run: pytest tests/ -q --tb=short
@@ -68,9 +74,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: aws-actions/configure-aws-credentials@v6
+      # Authenticate with the AWS account through GitHub Secrets.
+      # The credentials must belong to a dedicated IAM deployment user created/managed
+      # from the AWS root-controlled account. Root access keys must NEVER be used here.
+      - name: configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/qcomm-rfm-github-actions
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - uses: aws-actions/amazon-ecr-login@v2
@@ -87,15 +99,11 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
-      # SHA TAG ONLY. The ECR repo is created with --image-tag-mutability IMMUTABLE
-      # (runbook step 12), so re-pushing :latest would fail with
-      # ImageTagAlreadyExistsException on the SECOND CI run and every run after it.
-      # Immutability and a floating tag are mutually exclusive; immutability wins, because
-      # it is what makes "deploy by SHA" a guarantee rather than a convention.
+      # SHA TAG ONLY. The ECR repo is immutable; never push :latest.
       - uses: docker/build-push-action@v7
         id: push
         with:
-          context: ./3.DEPLOYMENT       # Dockerfile and src/ live here, not at the root
+          context: ./3.DEPLOYMENT
           push: true
           tags: ${{ steps.meta.outputs.image }}
           cache-from: type=gha
@@ -105,19 +113,16 @@ jobs:
         run: |
           echo "tag:    ${{ steps.meta.outputs.image }}"
           echo "digest: ${{ steps.push.outputs.digest }}"
-          echo "The OS layer is not byte-reproducible (apt-get upgrade). The digest is"
-          echo "what identifies a running image exactly."
+          echo "The digest identifies the exact image that was built."
 
-      # trivy-action publishes NO floating major tag. @v0 and @0.36.0 both fail at
-      # "Set up job", before any step runs. Verified 2026-09-09 via git ls-remote --tags.
       - name: security scan (report, do not block)
         uses: aquasecurity/trivy-action@v0.36.0
-        continue-on-error: true          # Trivy pulls its DB from ghcr.io, which rate-limits
+        continue-on-error: true
         with:
           image-ref: ${{ steps.meta.outputs.image }}
           severity: HIGH,CRITICAL
-          ignore-unfixed: true           # unpatchable base-image CVEs must not block forever
-          exit-code: '0'                 # REPORT mode. Findings are read in the sign-off.
+          ignore-unfixed: true
+          exit-code: '0'
           format: table
 
   # ------------------------------------------------------------------ 3. DEPLOY
@@ -129,9 +134,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: aws-actions/configure-aws-credentials@v6
+      - name: configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/qcomm-rfm-github-actions
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: pre-flight the runner toolchain
@@ -143,19 +151,19 @@ jobs:
             || pip install pyyaml
           echo "toolchain OK"
 
+      - name: verify AWS identity
+        run: aws sts get-caller-identity
+
       - name: kubeconfig
         run: aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION"
 
-      # CI VERIFIES infrastructure. CI never creates it. The cluster, the OIDC provider
-      # and the IRSA ServiceAccount are one-time human steps.
+      # CI verifies infrastructure; it does not create the cluster, namespace, or IRSA.
       - name: pre-flight cluster and IRSA
         run: |
           kubectl get ns "$K8S_NAMESPACE" >/dev/null || {
-            echo "FATAL: namespace '$K8S_NAMESPACE' missing. Runbook step 16 creates it."; exit 1; }
+            echo "FATAL: namespace '$K8S_NAMESPACE' missing. Create it from the AWS-controlled infrastructure setup."; exit 1; }
           kubectl -n "$K8S_NAMESPACE" get sa "$SERVICE_ACCOUNT" >/dev/null || {
-            echo "FATAL: ServiceAccount '$SERVICE_ACCOUNT' missing in '$K8S_NAMESPACE'."
-            echo "Runbook step 16 creates it via eksctl create iamserviceaccount."
-            echo "Without it, pods sit in ContainerCreating with no CI signal."; exit 1; }
+            echo "FATAL: ServiceAccount '$SERVICE_ACCOUNT' missing in '$K8S_NAMESPACE'."; exit 1; }
           echo "cluster + IRSA pre-flight OK"
 
       - name: render, verify, then apply
@@ -185,10 +193,16 @@ jobs:
         with: {python-version: '3.13'}
       - run: pip install -r "$PROJECT_DIR/requirements-dev.txt"
 
-      - uses: aws-actions/configure-aws-credentials@v6
+      - name: configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/qcomm-rfm-github-actions
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: verify AWS identity
+        run: aws sts get-caller-identity
 
       - name: resolve the load balancer
         id: lb
@@ -203,16 +217,12 @@ jobs:
           [ -n "$HOST" ] || { echo "FATAL: no LB hostname after 5 minutes"; exit 1; }
           echo "endpoint=http://${HOST}" >> "$GITHUB_OUTPUT"
 
-      # Golden expectations are recorded against the REAL promoted artifact by runbook
-      # step 16, never against a fixture-trained stand-in. If the file is absent this
-      # step says so and skips, rather than failing every run on a bogus comparison.
       - name: golden payload check against the live endpoint
         env:
           ENDPOINT: ${{ steps.lb.outputs.endpoint }}
         run: |
           if [ ! -f "$PROJECT_DIR/tests/golden/expected.json" ]; then
-            echo "tests/golden/expected.json absent — recorded by runbook step 8."
-            echo "Skipping. See tests/golden/README.md."
+            echo "tests/golden/expected.json absent — skipping golden check."
             exit 0
           fi
           python "$PROJECT_DIR/tests/golden/check_live.py" --endpoint "$ENDPOINT"
