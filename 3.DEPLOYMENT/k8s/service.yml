@@ -3,14 +3,12 @@ kind: Service
 metadata:
   name: qcomm-rfm-api
   namespace: prod
-  annotations:
-    service.beta.kubernetes.io/aws-load-balancer-type: "external"
-    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
-    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+  # Use the EKS-managed Service LoadBalancer path. The previous `external` / NLB-IP
+  # annotations require the AWS Load Balancer Controller to be installed in-cluster;
+  # this cluster does not provision that controller, so the Service stayed Pending.
+  # A plain LoadBalancer is handled by the EKS cloud provider without an extra controller.
 spec:
   type: LoadBalancer
   selector: {app: qcomm-rfm-api, track: stable}
-  # Port 8501 is NOT exposed. There is no UI container. An exposed unserved port leaves a
-  # permanently unhealthy LB target.
   ports:
     - {name: http, port: 80, targetPort: 8000, protocol: TCP}
