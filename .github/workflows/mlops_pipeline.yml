@@ -11,6 +11,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# AWS account/infrastructure is owner-controlled. CI authenticates with GitHub Secrets
+# belonging to a dedicated IAM deployment principal. NEVER use AWS root access keys here.
+# Required secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+# Optional: AWS_SESSION_TOKEN (only for temporary credentials)
+
 env:
   PROJECT_DIR: 3.DEPLOYMENT
   AWS_REGION:      ${{ vars.AWS_REGION      || 'ap-south-2' }}
@@ -33,12 +38,13 @@ jobs:
           python-version: '3.13'
           cache: pip
       - run: pip install -r "$PROJECT_DIR/requirements-dev.txt"
+      # Deliberately no AWS credentials in the test job.
       - name: pytest (no AWS credentials configured)
         working-directory: 3.DEPLOYMENT
         run: pytest tests/ -q --tb=short
       - name: verify the fixture is committed, not gitignored
         run: |
-          test -f "$PROJECT_DIR/tests/fixtures/sample_customers.csv" || { echo "fixture missing — a data/*.csv ignore rule probably ate it"; exit 1; }
+          test -f "$PROJECT_DIR/tests/fixtures/sample_customers.csv" || { echo "fixture missing"; exit 1; }
           test -f "$PROJECT_DIR/tests/fixtures/fixture_model.pkl" || { echo "fixture model missing"; exit 1; }
 
   build:
@@ -65,6 +71,8 @@ jobs:
           REG="${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
           SHA="${GITHUB_SHA::7}"
           echo "image=${REG}/${{ env.ECR_REPO }}:${SHA}" >> "$GITHUB_OUTPUT"
+          echo "registry=${REG}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v4
       - uses: docker/build-push-action@v7
         id: push
@@ -74,6 +82,17 @@ jobs:
           tags: ${{ steps.meta.outputs.image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # Catch the exact class of bug that previously reached EKS: Git stores shell
+      # scripts as 0644 here, while exec-form ENTRYPOINT requires the file to be executable.
+      - name: container smoke check
+        run: |
+          docker run --rm --entrypoint sh "${{ steps.meta.outputs.image }}" -ceu '
+            test -x /app/entrypoint.sh
+            test "$(stat -c "%a" /app/entrypoint.sh)" = "555"
+            test "$(id -u appuser 2>/dev/null || true)" = "10001"
+            test "${HOME:-}" = "/root" || true
+          '
+          echo "container filesystem/entrypoint checks passed"
       - name: record the image DIGEST
         run: |
           echo "tag:    ${{ steps.meta.outputs.image }}"
