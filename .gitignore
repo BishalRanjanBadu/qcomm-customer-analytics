@@ -33,3 +33,11 @@ venv/
 .venv/
 .ipynb_checkpoints/
 .DS_Store
+
+# runtime logs and operational state
+*.log
+CURRENT.backup.json
+
+# runtime logs and operational state
+*.log
+CURRENT.backup.json
