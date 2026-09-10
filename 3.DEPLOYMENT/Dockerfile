@@ -44,6 +44,10 @@ COPY --from=builder /opt/venv /opt/venv
 WORKDIR /app
 COPY --chown=appuser:appuser src/ ./src/
 COPY --chown=appuser:appuser entrypoint.sh ./entrypoint.sh
+# Git tracks entrypoint.sh as a regular text file (0644) in this repository. Make the
+# shipped copy executable explicitly; otherwise Kubernetes fails before the process starts
+# with OCI "exec: ./entrypoint.sh: permission denied" and the rollout can never become ready.
+RUN chmod 0555 ./entrypoint.sh
 
 # Verification runs in the FINAL stage — the one that ships, and the only one with
 # libgomp1. An import check in the builder fails on the check itself, not on the thing
