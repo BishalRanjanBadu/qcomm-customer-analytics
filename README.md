@@ -28,8 +28,8 @@ artifact served in production is the artifact that was actually promoted.
 
 | Phase | Scope | Status |
 |---|---|---|
-| **1 — Customer Analytics** | Data reconstruction, RFM engineering, EDA, hypothesis testing, leakage controls, KMeans segmentation, validation gates | **complete — `QCOMM_PHASE1_V2_2026-09-09`** |
-| **2 — Deployment** | Production preprocessing, artifact registry, FastAPI, tests, Docker, EKS manifests, CI/CD | **complete — `QCOMM_PHASE2_V3_2026-09-09`** |
+| **1 — Customer Analytics** | Data reconstruction, RFM engineering, EDA, hypothesis testing, leakage controls, KMeans segmentation, validation gates | **complete — `QCOMM_PHASE1`** |
+| **2 — Deployment** | Production preprocessing, artifact registry, FastAPI, tests, Docker, EKS manifests, CI/CD | **complete — `QCOMM_PHASE2`** |
 | **3 — Operate & Monitor** | Prediction logging, drift detection, automated retraining, automated promotion | **not started** |
 
 Each phase contains a manifest/runbook documenting the assumptions, verification results and
